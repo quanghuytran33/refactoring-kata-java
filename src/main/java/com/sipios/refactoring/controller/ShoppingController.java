@@ -1,7 +1,10 @@
 package com.sipios.refactoring.controller;
 
 import com.sipios.refactoring.api.model.Body;
-import com.sipios.refactoring.api.model.Item;
+import com.sipios.refactoring.dao.model.Order;
+import com.sipios.refactoring.dao.model.OrderLine;
+import com.sipios.refactoring.dao.repository.CustomerInfoRepository;
+import com.sipios.refactoring.dao.repository.ProductInfoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -14,104 +17,104 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.Month;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.sipios.refactoring.constant.TypesConstant.CustomerType.*;
 
 @RestController
 @RequestMapping("/shopping")
 public class ShoppingController {
 
     private Logger logger = LoggerFactory.getLogger(ShoppingController.class);
+
     private final Clock clock;
+    private final CustomerInfoRepository customerInfoRepository;
+    private final ProductInfoRepository productInfoRepository;
 
     public ShoppingController(Clock clock) {
         this.clock = clock;
+        this.customerInfoRepository = new CustomerInfoRepository();
+        this.productInfoRepository = new ProductInfoRepository();
     }
 
     @PostMapping
     public String getPrice(@RequestBody Body b) {
-        double p = 0;
-        double d;
+        double computedPrice = computePrice(b);
+        validatePriceByCustomerType(computedPrice, b.getType());
+        return String.valueOf(computedPrice);
+    }
 
-        // Compute discount for customer
-        if (b.getType().equals("STANDARD_CUSTOMER")) {
-            d = 1;
-        } else if (b.getType().equals("PREMIUM_CUSTOMER")) {
-            d = 0.9;
-        } else if (b.getType().equals("PLATINUM_CUSTOMER")) {
-            d = 0.5;
-        } else {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
-        }
-
-        // Compute total amount depending on the types and quantity of product and
-        // if we are in winter or summer discounts periods
-        if (isNotSalesPeriod()) {
-            if (b.getItems() == null) {
-                return "0";
-            }
-
-            for (int i = 0; i < b.getItems().length; i++) {
-                Item it = b.getItems()[i];
-
-                if (it.getType().equals("TSHIRT")) {
-                    p += 30 * it.getNb() * d;
-                } else if (it.getType().equals("DRESS")) {
-                    p += 50 * it.getNb() * d;
-                } else if (it.getType().equals("JACKET")) {
-                    p += 100 * it.getNb() * d;
-                }
-                // else if (it.getType().equals("SWEATSHIRT")) {
-                //     price += 80 * it.getNb();
-                // }
-            }
-        } else {
-            if (b.getItems() == null) {
-                return "0";
-            }
-
-            for (int i = 0; i < b.getItems().length; i++) {
-                Item it = b.getItems()[i];
-
-                if (it.getType().equals("TSHIRT")) {
-                    p += 30 * it.getNb() * d;
-                } else if (it.getType().equals("DRESS")) {
-                    p += 50 * it.getNb() * 0.8 * d;
-                } else if (it.getType().equals("JACKET")) {
-                    p += 100 * it.getNb() * 0.9 * d;
-                }
-                // else if (it.getType().equals("SWEATSHIRT")) {
-                //     price += 80 * it.getNb();
-                // }
-            }
-        }
-
+    private void validatePriceByCustomerType(double computedPrice, String customerType) {
         try {
-            if (b.getType().equals("STANDARD_CUSTOMER")) {
-                if (p > 200) {
-                    throw new Exception("Price (" + p + ") is too high for standard customer");
+            if (STANDARD_CUSTOMER.equals(customerType)) {
+                if (computedPrice > 200) {
+                    throw new Exception("Price (" + computedPrice + ") is too high for standard customer");
                 }
-            } else if (b.getType().equals("PREMIUM_CUSTOMER")) {
-                if (p > 800) {
-                    throw new Exception("Price (" + p + ") is too high for premium customer");
+            } else if (PREMIUM_CUSTOMER.equals(customerType)) {
+                if (computedPrice > 800) {
+                    throw new Exception("Price (" + computedPrice + ") is too high for premium customer");
                 }
-            } else if (b.getType().equals("PLATINUM_CUSTOMER")) {
-                if (p > 2000) {
-                    throw new Exception("Price (" + p + ") is too high for platinum customer");
+            } else if (PLATINUM_CUSTOMER.equals(customerType)) {
+                if (computedPrice > 2000) {
+                    throw new Exception("Price (" + computedPrice + ") is too high for platinum customer");
                 }
             } else {
-                if (p > 200) {
-                    throw new Exception("Price (" + p + ") is too high for standard customer");
+                if (computedPrice > 200) {
+                    throw new Exception("Price (" + computedPrice + ") is too high for standard customer");
                 }
             }
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
+    }
 
-        return String.valueOf(p);
+    //TODO move later to OrderService the code after this line
+    public double computePrice(Body body) {
+        if (body.getItems() == null) {
+            return 0;
+        }
+        Order order = mapBodyToOrder(body);
+        double totalPriceLines = computeTotalOrderLine(order.getOrderLines());
+        return order.getCustomer().getDiscountedRate() * totalPriceLines;
+    }
+
+    private double computeTotalOrderLine(List<OrderLine> lines) {
+        if (isNotSalesPeriod()) {
+            return lines.stream()
+                .mapToDouble(orderLine ->
+                    orderLine.getProduct().getPrice() *
+                        orderLine.getQuantity())
+                .sum();
+        } else {
+            return lines.stream()
+                .mapToDouble(orderLine ->
+                    orderLine.getProduct().getPrice() *
+                        orderLine.getProduct().getDiscountedRateOnSales() *
+                        orderLine.getQuantity())
+                .sum();
+        }
+    }
+
+    private Order mapBodyToOrder(Body body) {
+        List<OrderLine> orderLines = Stream.of(body.getItems())
+            .map(item -> {
+                if(productInfoRepository.getProductByType(item.getType()).isPresent()) {
+                    return new OrderLine(productInfoRepository.getProductByType(item.getType()).get(), item.getNb());
+                }
+                return null;
+            })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+        return new Order(customerInfoRepository.getCustomerByType(body.getType()), orderLines);
     }
 
     public boolean isNotSalesPeriod() {
         return !isSalesPeriod();
     }
+
     public boolean isSalesPeriod() {
         LocalDate localDate = LocalDate.now(clock);
         return isSummerSales(localDate) || isWinterSales(localDate);
@@ -124,5 +127,6 @@ public class ShoppingController {
     private boolean isWinterSales(LocalDate date) {
         return date.getDayOfMonth() < 15 && date.getDayOfMonth() > 5 && date.getMonth().equals(Month.JANUARY);
     }
+
 }
 

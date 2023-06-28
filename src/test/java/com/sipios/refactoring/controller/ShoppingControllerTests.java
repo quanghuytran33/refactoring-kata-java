@@ -97,6 +97,18 @@ class ShoppingControllerTests extends UnitTest {
     }
 
     @Test
+    void should_throw_if_bad_customer() {
+        initClockNow();
+        Item item = new Item();
+        item.setNb(180);
+        item.setType(TSHIRT);
+        Body body = new Body();
+        body.setType("123");
+        body.setItems(new Item[]{item});
+        Assertions.assertThrows(ResponseStatusException.class, () -> controller.getPrice(body));
+    }
+
+    @Test
     void should_return_30_if_tshirt() {
         initClockNow();
         Assertions.assertEquals("30.0", controller.getPrice(new Body(new Item[] {new Item(TSHIRT,1)}, STANDARD_CUSTOMER)));
