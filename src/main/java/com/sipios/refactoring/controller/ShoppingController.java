@@ -1,8 +1,7 @@
 package com.sipios.refactoring.controller;
 
-import java.util.Calendar;
-import java.util.Date;
-import java.util.TimeZone;
+import com.sipios.refactoring.api.model.Body;
+import com.sipios.refactoring.api.model.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -12,20 +11,25 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.Month;
+
 @RestController
 @RequestMapping("/shopping")
 public class ShoppingController {
 
     private Logger logger = LoggerFactory.getLogger(ShoppingController.class);
+    private final Clock clock;
+
+    public ShoppingController(Clock clock) {
+        this.clock = clock;
+    }
 
     @PostMapping
     public String getPrice(@RequestBody Body b) {
         double p = 0;
         double d;
-
-        Date date = new Date();
-        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("Europe/Paris"));
-        cal.setTime(date);
 
         // Compute discount for customer
         if (b.getType().equals("STANDARD_CUSTOMER")) {
@@ -40,18 +44,7 @@ public class ShoppingController {
 
         // Compute total amount depending on the types and quantity of product and
         // if we are in winter or summer discounts periods
-        if (
-            !(
-                cal.get(Calendar.DAY_OF_MONTH) < 15 &&
-                cal.get(Calendar.DAY_OF_MONTH) > 5 &&
-                cal.get(Calendar.MONTH) == 5
-            ) &&
-            !(
-                cal.get(Calendar.DAY_OF_MONTH) < 15 &&
-                cal.get(Calendar.DAY_OF_MONTH) > 5 &&
-                cal.get(Calendar.MONTH) == 0
-            )
-        ) {
+        if (isNotSalesPeriod()) {
             if (b.getItems() == null) {
                 return "0";
             }
@@ -115,62 +108,21 @@ public class ShoppingController {
 
         return String.valueOf(p);
     }
-}
 
-class Body {
-
-    private Item[] items;
-    private String type;
-
-    public Body(Item[] is, String t) {
-        this.items = is;
-        this.type = t;
+    public boolean isNotSalesPeriod() {
+        return !isSalesPeriod();
+    }
+    public boolean isSalesPeriod() {
+        LocalDate localDate = LocalDate.now(clock);
+        return isSummerSales(localDate) || isWinterSales(localDate);
     }
 
-    public Body() {}
-
-    public Item[] getItems() {
-        return items;
+    private boolean isSummerSales(LocalDate date) {
+        return date.getDayOfMonth() < 15 && date.getDayOfMonth() > 5 && date.getMonth().equals(Month.JUNE);
     }
 
-    public void setItems(Item[] items) {
-        this.items = items;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
+    private boolean isWinterSales(LocalDate date) {
+        return date.getDayOfMonth() < 15 && date.getDayOfMonth() > 5 && date.getMonth().equals(Month.JANUARY);
     }
 }
 
-class Item {
-
-    private String type;
-    private int nb;
-
-    public Item() {}
-
-    public Item(String type, int quantity) {
-        this.type = type;
-        this.nb = quantity;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public int getNb() {
-        return nb;
-    }
-
-    public void setNb(int nb) {
-        this.nb = nb;
-    }
-}
